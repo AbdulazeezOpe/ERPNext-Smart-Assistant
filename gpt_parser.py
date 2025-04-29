@@ -1,32 +1,72 @@
 import re
+import json
+from gpt_client import ask_gpt
+from gpt_client import ask_gpt_custom
 
-def parse_doctype_prompt(prompt):
-    # Extract Doctype name
-    doctype_match = re.search(r"(?:called|named)\s+(.+?)\s+(?:with\s+fields|having\s+fields)", prompt, re.IGNORECASE)
-    if doctype_match:
-        doctype_name = doctype_match.group(1).strip()
-    else:
-        doctype_name = "UnnamedDoctype"
 
-    # Extract fields
-    fields_section = re.search(r"fields[:\s]+(.+)", prompt, re.IGNORECASE)
-    fields = []
-    if fields_section:
-        raw_fields = fields_section.group(1).split(",")
+def parse_doctype_prompt(prompt: str):
+    from gpt_client import ask_gpt_custom
+    import json
+
+    RESERVED_FIELDNAMES = {"name", "owner", "creation", "modified", "modified_by", "docstatus"}
+
+    system_message = (
+        "You are an ERP Assistant.\n"
+        "Your job is to extract the following information from the user's instruction to create a custom Doctype:\n"
+        "- doctype_name (string)\n"
+        "- fields (list of objects, each having 'label', 'fieldname', and 'fieldtype')\n\n"
+        "fieldname should be generated automatically by converting the label to lowercase and replacing spaces with underscores.\n"
+        "If the fieldname is a reserved ERPNext word (like 'name', 'owner', 'creation'), add '_field' to it.\n\n"
+        "Respond ONLY in pure JSON format like this:\n"
+        "{\n"
+        "  \"doctype_name\": \"\",\n"
+        "  \"fields\": [\n"
+        "    {\"label\": \"\", \"fieldname\": \"\", \"fieldtype\": \"\"}\n"
+        "  ]\n"
+        "}"
+    )
+
+    try:
+        gpt_response = ask_gpt_custom(system_message, prompt)
+
+        print("🛠 RAW GPT RESPONSE (DOCTYPE PARSE):")
+        print(gpt_response)
+
+        if gpt_response.startswith("```"):
+            gpt_response = gpt_response.strip('```json').strip('```').strip()
+
+        parsed_data = json.loads(gpt_response)
+
+        doctype_name = parsed_data.get("doctype_name", "UnnamedDoctype")
+        raw_fields = parsed_data.get("fields", [])
+
+        fields = []
         for field in raw_fields:
-            match = re.match(r"(.+?)\s*\((.+?)\)", field.strip())
-            if match:
-                label = match.group(1).strip()
-                fieldtype = match.group(2).strip()
-                # Convert field label to fieldname (lowercase and underscores)
-                fieldname = label.lower().replace(" ", "_")
-                fields.append({
-                    "label": label,
-                    "fieldname": fieldname,
-                    "fieldtype": fieldtype
-                })
+            label = field.get("label")
+            fieldtype = field.get("fieldtype")
 
-    return doctype_name, fields
+            fieldname = label.lower().replace(" ", "_")
+            if fieldname in RESERVED_FIELDNAMES:
+                fieldname += "_field"  # 🔥 Fix reserved names
+
+            field_entry = {
+                "label": label,
+                "fieldname": fieldname,
+                "fieldtype": fieldtype
+            }
+
+            # Special handling for Link fields
+            if fieldtype.lower() == "link":
+                field_entry["options"] = "Project"  # or any default Doctype you want
+
+            fields.append(field_entry)
+
+        return doctype_name, fields
+
+    except Exception as e:
+        print("🔴 Doctype Parsing Error:", e)
+        return "UnnamedDoctype", []
+
 
 
 
@@ -171,19 +211,61 @@ def parse_reminder_prompt(prompt: str):
 
 
 
+
+
+
+
+
+from gpt_client import ask_gpt_custom
+import json
+
 def parse_department_prompt(prompt: str):
     """
-    Parses a prompt to extract the department name.
-    Example: "Create a new department called Signage."
+    Parses department creation prompt using GPT.
+    Extracts:
+    - department_name
+    - parent_department (default = "Management")
     """
-    dept_match = re.search(r"department\s+(named|called)?\s*(\w+)", prompt, re.IGNORECASE)
 
-    if dept_match:
-        department_name = dept_match.group(2).strip().title()
-    else:
-        department_name = "New Department"
+    system_message = (
+        "You are an ERP Assistant.\n"
+        "Your job is to extract department creation details from the user's instruction.\n"
+        "Extract exactly these two fields:\n"
+        "- department_name (string)\n"
+        "- parent_department (string)\n\n"
+        "If the parent_department is not mentioned, default it to 'Management'.\n"
+        "Respond ONLY in pure JSON format like this:\n"
+        "{\n"
+        "  \"department_name\": \"\",\n"
+        "  \"parent_department\": \"Management\"\n"
+        "}"
+    )
 
-    return department_name
+    try:
+        gpt_response = ask_gpt_custom(system_message, prompt)
+
+        print("🛠 RAW GPT RESPONSE (DEPARTMENT PARSE):")
+        print(gpt_response)
+
+        # Remove possible ```json ``` wrappers
+        if gpt_response.startswith("```"):
+            gpt_response = gpt_response.strip('```json').strip('```').strip()
+
+        parsed_data = json.loads(gpt_response)
+
+        department_name = parsed_data.get("department_name")
+        parent_department = parsed_data.get("parent_department", "Management")
+
+        return department_name, parent_department
+
+    except Exception as e:
+        print("🔴 Department Parsing Error:", e)
+        return None, "Management"
+
+
+
+
+
 
 
 
@@ -300,41 +382,52 @@ def parse_claim_prompt(prompt: str):
 
     return project_name, claim_name, amount
 
+from gpt_client import ask_gpt_custom
+import json
+
 
 
 def parse_project_prompt(prompt: str):
-    """
-    Parses project creation and role assignment prompts.
-    """
-    prompt = prompt.lower()
+    system_message = (
+        "You are an ERP Assistant.\n"
+        "Extract the following fields from the user's instruction:\n"
+        "- project_name (string)\n"
+        "- expected_end_date (string, format YYYY-MM-DD, if available)\n"
+        "- estimated_cost (number, if available)\n"
+        "- assignments (list of objects with 'user' and 'role')\n\n"
+        "If any field is missing, set it to null or empty list.\n"
+        "Respond ONLY in pure JSON format without any Markdown syntax like ```."
+    )
 
-    project_name = None
-    start_date = None
-    budget_amount = None
-    assignments = []  # List of (user, role) pairs
+    try:
+        gpt_response = ask_gpt_custom(system_message, prompt)
 
-    # Find Project Name
-    project_match = re.search(r"project\s+([\w\s]+)", prompt)
-    if project_match:
-        project_name = project_match.group(1).strip()
+        print("🛠 RAW GPT RESPONSE (PROJECT PARSE):")
+        print(gpt_response)
 
-    # Find Start Date
-    date_match = re.search(r"start[:\s]+([\w\s\d]+)", prompt)
-    if date_match:
-        start_date = date_match.group(1).strip()
+        # 🔥 Strip any ```json ``` wrappers
+        if gpt_response.startswith("```"):
+            gpt_response = gpt_response.strip('```json').strip('```').strip()
 
-    # Find Budget
-    budget_match = re.search(r"budget[:\s]*rm\s?([\d,\.]+)", prompt)
-    if budget_match:
-        budget_amount = float(budget_match.group(1).replace(",", ""))
+        parsed_data = json.loads(gpt_response)
 
-    # Find Role Assignments
-    if "assign" in prompt and "to" in prompt:
-        assign_matches = re.findall(r"assign\s+([\w\s]+?)\s+to\s+([\w\s]+)", prompt)
-        for user, role in assign_matches:
-            assignments.append((user.strip().title(), role.strip().title()))
+        project_name = parsed_data.get("project_name")
+        expected_end_date = parsed_data.get("expected_end_date")
+        estimated_costing = parsed_data.get("estimated_cost")
+        assignments = []
 
-    return project_name, start_date, budget_amount, assignments
+        assignment_list = parsed_data.get("assignments", [])
+        if assignment_list:
+            for a in assignment_list:
+                user = a.get("user", "").title()
+                role = a.get("role", "").title()
+                assignments.append((user, role))
+
+        return project_name, expected_end_date, estimated_costing, assignments
+
+    except Exception as e:
+        print("🔴 Project Parsing Error:", e)
+        return None, None, None, []
 
 
 
@@ -472,3 +565,40 @@ def parse_dashboard_prompt(prompt: str):
         frequency = "Daily"
 
     return target_audience, report_type, frequency
+
+
+
+
+
+
+
+def parse_boq_creation_prompt(prompt: str):
+    system_message = (
+        "You are an ERP Assistant.\n"
+        "Extract the following fields strictly from the user's instruction:\n"
+        "- project_name (string)\n"
+        "- item_name (string)\n"
+        "- quantity (number)\n"
+        "- price (number)\n\n"
+        "Always respond ONLY in this JSON format:\n"
+        "{\n"
+        "  \"budget_amount_rm\": \"\",\n"
+        "  \"item_name\": \"\",\n"
+        "  \"quantity\": 0,\n"
+        "  \"price\": 0\n"
+        "}\n"
+    )
+
+    try:
+        gpt_response = ask_gpt_custom(system_message, prompt)
+
+        print("🛠 RAW GPT RESPONSE:")
+        print(gpt_response)  # 👉 Debug print here
+
+        parsed_data = json.loads(gpt_response)
+
+        return parsed_data.get("budget_amount_rm"), parsed_data.get("item_name"), parsed_data.get("quantity"), parsed_data.get("price")
+
+    except Exception as e:
+        print("🔴 Parsing Error:", e)
+        return None, None, None, None
