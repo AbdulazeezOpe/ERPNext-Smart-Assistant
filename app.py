@@ -320,21 +320,66 @@ else:
                             st.error("❌ Failed to create user. User may already exist or check API access.")
 
                     
+                    # Check if prompt mentions BOQ creation
+                    if "boq" in gpt_prompt.lower() and ("create" in gpt_prompt.lower() or "add" in gpt_prompt.lower()):
+                        st.info("Detected BOQ creation request. Parsing details...")
+
+                        from gpt_parser import parse_boq_creation_prompt
+                        budget_amount_rm, item_name, quantity, price = parse_boq_creation_prompt(gpt_prompt)
+
+                        print("👉 DEBUG: Project Name parsed:", project_name)
+                        print("👉 DEBUG: Item Name parsed:", item_name)
+                        print("👉 DEBUG: Quantity parsed:", quantity)
+                        print("👉 DEBUG: Price parsed:", price)
+
+                        auth = (API_KEY, API_SECRET)
+
+                        from erp_api import create_boq_entry
+
+                        # ✅ If we reach here, project exists and is valid → Create BOQ
+                        boq_result = create_boq_entry(API_URL, auth, budget_amount_rm, item_name, quantity, price)
+                        print("🧠 Project API Response:", boq_result)
+
+                        if "data" in boq_result:
+                            boq_data = boq_result["data"]
+                            st.success(
+                                f"📦 BOQ item **'{boq_data.get('boq_item_description')}'** created successfully '**!"
+                            )
+                        else:
+                            st.error("❌ Failed to create BOQ item. Check prompt or ERP access.")
+
+                                
+                               
+
+
+                           
+                    
                     
                     # Check if prompt mentions department creation
                     if "department" in gpt_prompt.lower() and ("create" in gpt_prompt.lower() or "add" in gpt_prompt.lower()):
                         st.info("Detected department creation request. Parsing details...")
 
                         from gpt_parser import parse_department_prompt
-                        department_name = parse_department_prompt(gpt_prompt)
+                        
+                        department_name, parent_department = parse_department_prompt(gpt_prompt)
+                        print("👉 DEBUG: Department Name parsed:", department_name)
+                        print("👉 DEBUG: Parent Department parsed:", parent_department)
 
                         auth = (API_KEY, API_SECRET)
-                        department_result = create_department(API_URL, auth, department_name)
+                        company_name = "S&I Urban Designers"  # <-- Your company
+
+                        from erp_api import create_department
+                        department_result = create_department(API_URL, API_KEY, API_SECRET, department_name, company_name, parent_department)
 
                         if "data" in department_result:
-                            st.success(f"🏢 Department '{department_name}' created successfully!")
+                            department_data = department_result["data"]
+                            st.success(
+                                f"🏢 Department **'{department_data.get('department_name')}'** created successfully under **'{department_data.get('parent_department')}'**!"
+                            )
                         else:
                             st.error("❌ Failed to create department. Check prompt or ERP access.")
+
+
 
                     
                     # Detect Project Creation or Assignment
@@ -344,33 +389,29 @@ else:
                         from gpt_parser import parse_project_prompt
                         from erp_api import create_project, assign_project_roles
 
-                        project_name, start_date, budget_amount, assignments = parse_project_prompt(gpt_prompt)
-
+                        project_name, expected_end_date, estimated_costing, assignments = parse_project_prompt(gpt_prompt)
                         auth = (API_KEY, API_SECRET)
 
-                        if "create" in gpt_prompt.lower():
-                            # Create a new project
-                            if project_name:
-                                if st.checkbox(f"✅ Confirm creation of Project: {project_name}?"):
-                                    result = create_project(API_URL, auth, project_name, start_date, budget_amount)
-                                    if "data" in result:
-                                        st.success(f"🏗️ Project '{project_name}' created successfully!")
-                                    else:
-                                        st.error("❌ Failed to create project. Check input details.")
-                                else:
-                                    st.warning("⚡ Please confirm before creating project.")
+                        # Show parsed project data
+                        if project_name:
+                            st.info(f"🧾 Parsed Project:\n• Name: {project_name}\n• End Date: {expected_end_date or 'N/A'}\n• Cost: {estimated_costing or 'N/A'}")
 
-                        if "assign" in gpt_prompt.lower():
-                            # Assign team members
-                            if project_name and assignments:
-                                if st.checkbox(f"✅ Confirm assignment of team members to Project: {project_name}?"):
-                                    result = assign_project_roles(API_URL, auth, project_name, assignments)
-                                    if "data" in result:
-                                        st.success(f"👥 Team members assigned to Project '{project_name}' successfully!")
-                                    else:
-                                        st.error("❌ Failed to assign team members. Check details.")
+                        # Handle project creation
+                        if "create" in gpt_prompt.lower():
+                            if not project_name:
+                                st.error("❌ Project name is missing. Please rephrase your instruction.")
+                            else: 
+                                result = create_project(API_URL, auth, project_name, expected_end_date, estimated_costing)
+                                print("🧠 Project API Response:", result)
+
+                                if result and "data" in result:
+                                    st.success(f"🏗️ Project '{project_name}' created successfully!")
                                 else:
-                                    st.warning("⚡ Please confirm before assigning roles.")
+                                    st.error("❌ Failed to create project. Check input details or ERP connection.")
+
+                        
+
+
 
                     
                     # Detect Vehicle/Asset Related Actions
