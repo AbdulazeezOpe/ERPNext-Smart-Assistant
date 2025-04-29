@@ -189,20 +189,27 @@ def create_scheduled_reminder(api_url: str, auth: tuple, doctype: str, condition
     return response.json()
 
 
-
-
-def create_department(api_url: str, auth: tuple, department_name: str):
+def create_department(api_url: str, api_key: str, api_secret: str, department_name: str, company_name: str, parent_department: str = "Management"):
     """
     Create a new Department in ERPNext.
     """
     payload = {
         "doctype": "Department",
-        "department_name": department_name
+        "department_name": department_name,
+        "company": company_name,
+        "department": department_name,
+        "parent_department": parent_department,
+        "is_group": 0
     }
+
+    headers = {
+        "Authorization": f"token {api_key}:{api_secret}"
+    }
+    print("👉 DEBUG: Payload being sent to ERPNext:", payload)
 
     response = requests.post(
         f"{api_url}/api/resource/Department",
-        auth=auth,
+        headers=headers,
         json=payload
     )
 
@@ -212,6 +219,7 @@ def create_department(api_url: str, auth: tuple, department_name: str):
     except requests.exceptions.HTTPError as e:
         print("🔴 Department Creation Error:", response.text)
         return {"error": response.text}
+
 
 
 def create_user(api_url: str, auth: tuple, first_name: str, email: str):
@@ -442,29 +450,36 @@ def get_claims(api_url: str, auth: tuple, project_name: str = None, status: str 
         return []
 
 
-def create_project(api_url: str, auth: tuple, project_name: str, start_date: str = None, budget_amount: float = None):
+def create_project(api_url: str, auth: tuple, project_name: str, expected_end_date: str = None, estimated_cost: float = None):
     """
-    Create a new Project in ERPNext.
+    Create a new Project in ERPNext with optional expected end date and estimated cost.
     """
+
     payload = {
         "doctype": "Project",
         "project_name": project_name,
-        "expected_start_date": start_date,
-        "budget_amount": budget_amount
+        "project_type": "External",  # You can change to "Internal" if needed
+        "status": "Open"
     }
 
-    response = requests.post(
-        f"{api_url}/api/resource/Project",
-        auth=auth,
-        json=payload
-    )
+    # Add optional fields if provided
+    if expected_end_date:
+        payload["expected_end_date"] = expected_end_date
+
+    if estimated_cost is not None:
+        payload["estimated_costing"] = estimated_cost
 
     try:
+        response = requests.post(
+            f"{api_url}/api/resource/Project",
+            auth=auth,
+            json=payload
+        )
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.HTTPError as e:
-        print("🔴 Project Creation Error:", response.text)
-        return {"error": response.text}
+    except Exception as e:
+        print("🔴 Project Creation Error:", e)
+        return {"error": str(e)}
 
 
 def assign_project_roles(api_url: str, auth: tuple, project_name: str, user_role_pairs: list):
@@ -746,3 +761,50 @@ def generate_summary_report(api_url: str, auth: tuple):
         summary["Total Projects"] = "Error Fetching"
 
     return summary
+
+
+def create_boq_entry(api_url: str, auth: tuple, project_name: str, item_name: str, quantity: float, price: float):
+    """
+    Create a new BOQ (Bill of Quantities) entry for a project.
+    """
+    payload = {
+        "doctype": "Project BOQ",  # Assuming your ERPNext BOQ Doctype is called 'Project BOQ'
+        "boq_item_description": item_name,
+        "quantity": quantity,
+        "budget_amount_rm": price,
+        
+    }
+
+    response = requests.post(
+        f"{api_url}/api/resource/Project BOQ",
+        auth=auth,
+        json=payload
+    )
+
+    try:
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        print("🔴 BOQ Entry Creation Error:", response.text)
+        return {"error": response.text}
+
+
+
+
+
+def project_exists(api_url: str, auth: tuple, project_name: str) -> bool:
+    """
+    Check if a project with the given name exists in ERPNext.
+    """
+    try:
+        response = requests.get(
+            f"{api_url}/api/resource/Project/{project_name}",
+            auth=auth
+        )
+        if response.status_code == 200:
+            return True
+        else:
+            return False
+    except Exception as e:
+        print("🔴 Project Check Error:", e)
+        return False
